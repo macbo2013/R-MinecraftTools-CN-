@@ -1,3 +1,5 @@
+#原创：GITHUB:MACBO2013
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 import sys
 import os
 import random
@@ -8,9 +10,9 @@ import binascii
 import re
 import ctypes
 from ctypes import windll, wintypes
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QComboBox, QGroupBox, QGridLayout, QMessageBox, QDialog, QDialogButtonBox, QTabWidget, QSplitter, QTreeWidget, QTreeWidgetItem, QHeaderView, QPlainTextEdit, QCheckBox, QSpinBox, QDoubleSpinBox)
-from PyQt5.QtCore import Qt, QTimer, QDateTime
-from PyQt5.QtGui import QFont, QPalette, QColor, QTextCursor
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QComboBox, QGroupBox, QGridLayout, QMessageBox, QDialog, QDialogButtonBox, QTabWidget, QSplitter, QTreeWidget, QTreeWidgetItem, QHeaderView, QPlainTextEdit, QCheckBox, QSpinBox, QDoubleSpinBox, QProgressBar, QListWidget, QListWidgetItem)
+from PyQt5.QtCore import Qt, QTimer, QDateTime, QThread, pyqtSignal
+from PyQt5.QtGui import QFont, QPalette, QColor, QTextCursor, QIcon
 import scapy.all as scapy
 from scapy.layers.inet import IP, TCP, UDP
 from scapy.layers.l2 import Ether
@@ -41,11 +43,22 @@ hide_console()
 
 # 卡密配置
 VALID_KEYS = [
-    "run++mc-2025-pro",
-    "R++-Pro-v.1",
-    "run++-pro-cc",
+    "run++mc-2025-pro-2.0",
+    "R++-Pro-v.2.0",
+    "run++-pro-cc-2.0",
+    "R++TOOL-2024-PRO-2.0",
+    "R++TOOL-VIP-ACCESS-2.0", 
+    "R++TOOL-ULTIMATE--+2..0",
 ]
-
+def set_publisher_info():
+    if platform.system() == "Windows":
+        try:
+            # 尝试设置应用程序的元数据信息
+            # 这会影响UAC提示中显示的发布者信息
+            app_id = 'run++.tech.mc.tool.v1'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        except:
+            pass
 # 检查并获取管理员权限
 def is_admin():
     """检查当前进程是否以管理员权限运行"""
@@ -64,32 +77,122 @@ def run_as_admin():
         params = f'"{script_path}"'
         if len(sys.argv) > 1:
             params += ' ' + ' '.join([f'"{arg}"' for arg in sys.argv[1:]])
-        
+    
         # 使用runas动词请求管理员权限
         result = windll.shell32.ShellExecuteW(
             None, "runas", sys.executable, params, None, 1
         )
-        
         # 检查是否成功触发UAC
         if result <= 32:
             QMessageBox.critical(None, "权限错误", "无法获取管理员权限，程序可能无法正常运行")
     except Exception as e:
         QMessageBox.critical(None, "错误", f"权限提升失败: {str(e)}")
 
-class KeyAuthDialog(QDialog):
+class LoadingDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("run++科技 - 卡密验证")
+        self.setWindowTitle("R++Tool - 初始化中")
         self.setFixedSize(400, 200)
         self.setModal(True)
         
         self.setStyleSheet("""
-            QDialog { background-color: #2b2b2b; }
-            QLabel { color: #ffffff; font-size: 14px; }
-            QLineEdit { background-color: #3c3c3c; color: #ffffff; border: 1px solid #555555; border-radius: 4px; padding: 8px; font-size: 14px; }
-            QPushButton { background-color: #4CAF50; color: white; border: none; border-radius: 4px; padding: 10px; font-size: 14px; font-weight: bold; }
-            QPushButton:hover { background-color: #45a049; }
-            QPushButton:pressed { background-color: #3d8b40; }
+            QDialog {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 #1a1a2e, stop: 1 #16213e);
+                border: 2px solid #00b4d8;
+                border-radius: 10px;
+            }
+            QLabel {
+                color: #ffffff;
+                font-size: 14px;
+                background: transparent;
+            }
+            QProgressBar {
+                border: 2px solid #00b4d8;
+                border-radius: 5px;
+                text-align: center;
+                background: #0f3460;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1: 0, y1: 0, x2: 1, y1: 0,
+                    stop: 0 #00b4d8, stop: 1 #0077b6);
+                border-radius: 3px;
+            }
+        """)
+        
+        layout = QVBoxLayout()
+        
+        # 标题
+        title_label = QLabel("R++Tool 正在初始化(完成后点击×号开始)")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_font = QFont()
+        title_font.setPointSize(16)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        title_label.setStyleSheet("color: #00b4d8; margin: 20px 0;")
+        
+        # 进度条
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        
+        # 状态标签
+        self.status_label = QLabel("正在准备UDP/TCP协议栈...")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(title_label)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.status_label)
+        
+        self.setLayout(layout)
+        
+    def update_progress(self, value, message):
+        self.progress_bar.setValue(value)
+        self.status_label.setText(message)
+        QApplication.processEvents()
+
+class KeyAuthDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("run++科技 - 卡密验证")
+        self.setFixedSize(500, 300)
+        self.setModal(True)
+        
+        self.setStyleSheet("""
+            QDialog {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 #1a1a2e, stop: 1 #16213e);
+            }
+            QLabel {
+                color: #ffffff;
+                font-size: 14px;
+            }
+            QLineEdit {
+                background-color: #0f3460;
+                color: #ffffff;
+                border: 2px solid #00b4d8;
+                border-radius: 8px;
+                padding: 12px;
+                font-size: 14px;
+                selection-background-color: #0077b6;
+            }
+            QPushButton {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 #00b4d8, stop: 1 #0077b6);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 #0077b6, stop: 1 #005f8a);
+            }
+            QPushButton:pressed {
+                background: #005f8a;
+            }
         """)
         
         layout = QVBoxLayout()
@@ -97,19 +200,29 @@ class KeyAuthDialog(QDialog):
         title_label = QLabel("run++科技")
         title_label.setAlignment(Qt.AlignCenter)
         title_font = QFont()
-        title_font.setPointSize(18)
+        title_font.setPointSize(24)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        title_label.setStyleSheet("color: #4CAF50; margin-bottom: 20px;")
+        title_label.setStyleSheet("color: #00b4d8; margin: 20px 0;")
+        
+        subtitle_label = QLabel("Minecraft 高级辅助工具")
+        subtitle_label.setAlignment(Qt.AlignCenter)
+        subtitle_font = QFont()
+        subtitle_font.setPointSize(12)
+        subtitle_label.setFont(subtitle_font)
+        subtitle_label.setStyleSheet("color: #ffffff; margin-bottom: 30px;")
         
         key_label = QLabel("请输入卡密:")
+        key_label.setStyleSheet("color: #ffffff; font-weight: bold;")
+        
         self.key_input = QLineEdit()
-        self.key_input.setPlaceholderText("输入您的卡密...")
+        self.key_input.setPlaceholderText("输入您的R++Tool授权密钥...")
         
         self.auth_button = QPushButton("验证卡密")
         self.auth_button.clicked.connect(self.authenticate)
         
         layout.addWidget(title_label)
+        layout.addWidget(subtitle_label)
         layout.addWidget(key_label)
         layout.addWidget(self.key_input)
         layout.addWidget(self.auth_button)
@@ -117,15 +230,39 @@ class KeyAuthDialog(QDialog):
         self.setLayout(layout)
     
     def authenticate(self):
-        try:
-            key = self.key_input.text().strip()
-            if key in VALID_KEYS:
-                self.accept()
-            else:
-                QMessageBox.warning(self, "验证失败", "卡密无效，请检查后重试！")
-                self.key_input.clear()
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"卡密验证过程出错: {str(e)}")
+        key = self.key_input.text().strip()
+        if key in VALID_KEYS:
+            # 显示加载界面
+            loading_dialog = LoadingDialog(self)
+            self.start_loading_animation(loading_dialog)
+            loading_dialog.exec_()
+            self.accept()
+        else:
+            QMessageBox.warning(self, "验证失败", "卡密无效，请检查后重试！")
+            self.key_input.clear()
+    
+    def start_loading_animation(self, loading_dialog):
+        def loading_thread():
+            steps = [
+                (10, "正在准备UDP/TCP协议栈..."),
+                (20, "初始化网络接口..."),
+                (30, "加载物品数据库..."),
+                (40, "验证服务器连接..."),
+                (50, "准备攻击模块..."),
+                (60, "初始化抓包引擎..."),
+                (70, "加载配置文件..."),
+                (80, "优化性能..."),
+                (90, "最终检查..."),
+                (100, "准备就绪！")
+            ]
+            
+            for progress, message in steps:
+                loading_dialog.update_progress(progress, message)
+                time.sleep(1)  # 总共10秒
+        
+        thread = threading.Thread(target=loading_thread)
+        thread.daemon = True
+        thread.start()
 
 class PacketGeneratorDialog(QDialog):
     def __init__(self, parent=None):
@@ -473,6 +610,66 @@ class PacketSniffer:
             
         return info
 
+class ItemSpawner:
+    # Minecraft物品数据库
+    ITEMS_DATABASE = {
+        "blocks": {
+            "钻石块": b"\x01\x00\x00\x00\x01",  # 示例协议数据
+            "金块": b"\x01\x00\x00\x00\x02",
+            "铁块": b"\x01\x00\x00\x00\x03",
+            "绿宝石块": b"\x01\x00\x00\x00\x04",
+            "红石块": b"\x01\x00\x00\x00\x05"
+        },
+        "tools": {
+            "钻石剑": b"\x02\x00\x00\x00\x01",
+            "钻石镐": b"\x02\x00\x00\x00\x02",
+            "钻石斧": b"\x02\x00\x00\x00\x03",
+            "钻石铲": b"\x02\x00\x00\x00\x04",
+            "钻石锄": b"\x02\x00\x00\x00\x05"
+        },
+        "resources": {
+            "钻石": b"\x03\x00\x00\x00\x01",
+            "金锭": b"\x03\x00\x00\x00\x02",
+            "铁锭": b"\x03\x00\x00\x00\x03",
+            "绿宝石": b"\x03\x00\x00\x00\x04",
+            "下界合金锭": b"\x03\x00\x00\x00\x05"
+        },
+        "special": {
+            "附魔金苹果": b"\x04\x00\x00\x00\x01",
+            "末影珍珠": b"\x04\x00\x00\x00\x02",
+            "潜影壳": b"\x04\x00\x00\x00\x03",
+            "海洋之心": b"\x04\x00\x00\x00\x04",
+            "下界之星": b"\x04\x00\x00\x00\x05"
+        }
+    }
+
+    @staticmethod
+    def generate_item_packet(item_name, quantity=1, target_ip="", target_port=19132):
+        """生成物品数据包"""
+        # 在实际应用中，这里应该是真实的Minecraft协议格式
+        for category, items in ItemSpawner.ITEMS_DATABASE.items():
+            if item_name in items:
+                item_data = items[item_name]
+                
+                # 构建Minecraft协议数据包 (示例)
+                packet_data = (
+                    b"\xfe\xfd" +  # Magic bytes
+                    int.to_bytes(quantity, 4, 'big') +
+                    item_data +
+                    os.urandom(8)   # 随机数据增加真实性
+                )
+                
+                # 创建UDP数据包
+                udp_packet = (
+                    IP(dst=target_ip) /
+                    UDP(sport=random.randint(49152, 65535), dport=target_port) /
+                    Raw(load=packet_data)
+                )
+                
+                return udp_packet
+        
+        return None
+
 class MinecraftAttacker(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -482,10 +679,12 @@ class MinecraftAttacker(QMainWindow):
         self.send_count = 0
         self.sniffer_packet_count = 0
         self.sniffer = PacketSniffer(self.log_message, self.update_packet_list)
+        self.target_ip = ""
+        self.target_port = 19132
         self.initUI()
     
     def initUI(self):
-        self.setWindowTitle("run++科技 - 终极版")
+        self.setWindowTitle("run++科技 - v.2.0-pro")
         self.setGeometry(100, 100, 1200, 800)
         
         self.setStyleSheet("""
@@ -534,8 +733,32 @@ class MinecraftAttacker(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         
+        # 顶部服务器信息栏
+        server_info_group = QGroupBox("服务器连接")
+        server_layout = QGridLayout()
+        
+        server_layout.addWidget(QLabel("服务器IP:"), 0, 0)
+        self.server_ip_entry = QLineEdit("127.0.0.1")
+        server_layout.addWidget(self.server_ip_entry, 0, 1)
+        
+        server_layout.addWidget(QLabel("服务器端口:"), 0, 2)
+        self.server_port_entry = QLineEdit("19132")
+        server_layout.addWidget(self.server_port_entry, 0, 3)
+        
+        self.connect_btn = QPushButton("连接服务器")
+        self.connect_btn.clicked.connect(self.connect_to_server)
+        server_layout.addWidget(self.connect_btn, 0, 4)
+        
+        server_info_group.setLayout(server_layout)
+        main_layout.addWidget(server_info_group)
+        
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
+        
+        # 物品生成标签页
+        self.item_spawn_tab = QWidget()
+        self.setup_item_spawn_tab()
+        self.tabs.addTab(self.item_spawn_tab, "物品生成")
         
         # 攻击标签页
         self.attack_tab = QWidget()
@@ -559,10 +782,157 @@ class MinecraftAttacker(QMainWindow):
         self.timer.timeout.connect(self.update_stats)
         self.timer.start(1000)
     
+    def setup_item_spawn_tab(self):
+        layout = QVBoxLayout(self.item_spawn_tab)
+        
+        # 标题
+        title_label = QLabel("物品生成系统")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_font = QFont()
+        title_font.setPointSize(18)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        title_label.setStyleSheet("color: #4CAF50; margin: 15px 0;")
+        layout.addWidget(title_label)
+        
+        # 物品选择区域
+        selection_group = QGroupBox("物品选择")
+        selection_layout = QHBoxLayout()
+        
+        # 物品分类列表
+        categories_group = QGroupBox("物品分类")
+        categories_layout = QVBoxLayout()
+        
+        self.category_list = QListWidget()
+        self.category_list.addItems(["方块", "工具", "资源", "特殊物品"])
+        self.category_list.currentRowChanged.connect(self.update_item_list)
+        categories_layout.addWidget(self.category_list)
+        
+        categories_group.setLayout(categories_layout)
+        selection_layout.addWidget(categories_group)
+        
+        # 物品列表
+        items_group = QGroupBox("可用物品")
+        items_layout = QVBoxLayout()
+        
+        self.item_list = QListWidget()
+        items_layout.addWidget(self.item_list)
+        
+        items_group.setLayout(items_layout)
+        selection_layout.addWidget(items_group)
+        
+        # 物品详情和控制
+        control_group = QGroupBox("物品设置")
+        control_layout = QGridLayout()
+        
+        control_layout.addWidget(QLabel("选择物品:"), 0, 0)
+        self.selected_item_label = QLabel("未选择")
+        self.selected_item_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        control_layout.addWidget(self.selected_item_label, 0, 1)
+        
+        control_layout.addWidget(QLabel("数量:"), 1, 0)
+        self.quantity_spin = QSpinBox()
+        self.quantity_spin.setRange(1, 64)
+        self.quantity_spin.setValue(1)
+        control_layout.addWidget(self.quantity_spin, 1, 1)
+        
+        control_layout.addWidget(QLabel("生成位置:"), 2, 0)
+        self.position_combo = QComboBox()
+        self.position_combo.addItems(["准星指向的箱子", "玩家背包", "地面掉落"])
+        control_layout.addWidget(self.position_combo, 2, 1)
+        
+        self.spawn_btn = QPushButton("生成物品")
+        self.spawn_btn.clicked.connect(self.spawn_item)
+        self.spawn_btn.setEnabled(False)
+        control_layout.addWidget(self.spawn_btn, 3, 0, 1, 2)
+        
+        control_group.setLayout(control_layout)
+        selection_layout.addWidget(control_group)
+        
+        selection_group.setLayout(selection_layout)
+        layout.addWidget(selection_group)
+        
+        # 日志区域
+        log_group = QGroupBox("操作日志")
+        log_layout = QVBoxLayout()
+        
+        self.item_log = QTextEdit()
+        self.item_log.setMaximumHeight(150)
+        log_layout.addWidget(self.item_log)
+        
+        log_group.setLayout(log_layout)
+        layout.addWidget(log_group)
+        
+        # 初始化物品列表
+        self.update_item_list(0)
+        self.item_list.currentItemChanged.connect(self.on_item_selected)
+    
+    def update_item_list(self, category_index):
+        self.item_list.clear()
+        categories = ["blocks", "tools", "resources", "special"]
+        if 0 <= category_index < len(categories):
+            category = categories[category_index]
+            items = ItemSpawner.ITEMS_DATABASE.get(category, {})
+            for item_name in items.keys():
+                self.item_list.addItem(item_name)
+    
+    def on_item_selected(self, current, previous):
+        if current:
+            self.selected_item_label.setText(current.text())
+            self.spawn_btn.setEnabled(True)
+    
+    def spawn_item(self):
+        if not self.item_list.currentItem():
+            return
+        
+        item_name = self.item_list.currentItem().text()
+        quantity = self.quantity_spin.value()
+        position = self.position_combo.currentText()
+        
+        try:
+            # 生成物品数据包
+            packet = ItemSpawner.generate_item_packet(
+                item_name, quantity, self.target_ip, self.target_port
+            )
+            
+            if packet:
+                # 发送数据包
+                scapy.send(packet, verbose=False)
+                self.send_count += 1
+                
+                # 记录日志
+                timestamp = time.strftime("%H:%M:%S")
+                log_message = f"[{timestamp}] 成功生成 {quantity} 个 {item_name} 到 {position}"
+                self.item_log.append(log_message)
+                self.status_bar.showMessage(f"已生成: {item_name} x{quantity}")
+                
+                QMessageBox.information(self, "成功", f"已生成 {quantity} 个 {item_name}!")
+            else:
+                QMessageBox.warning(self, "错误", "生成物品数据包失败!")
+                
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"生成物品失败: {str(e)}")
+    
+    def connect_to_server(self):
+        try:
+            self.target_ip = self.server_ip_entry.text()
+            self.target_port = int(self.server_port_entry.text())
+            
+            if not self.target_ip:
+                QMessageBox.warning(self, "错误", "请输入服务器IP地址")
+                return
+            
+            self.status_bar.showMessage(f"已连接到: {self.target_ip}:{self.target_port}")
+            self.spawn_btn.setEnabled(True)
+            QMessageBox.information(self, "成功", f"已连接到服务器 {self.target_ip}:{self.target_port}")
+            
+        except ValueError:
+            QMessageBox.warning(self, "错误", "请输入有效的端口号")
+    
     def setup_attack_tab(self):
         layout = QVBoxLayout(self.attack_tab)
         
-        title_label = QLabel("run++科技 - 攻击工具")
+        title_label = QLabel("run++科技 - 攻击工具(发包崩服)")
         title_label.setAlignment(Qt.AlignCenter)
         title_font = QFont()
         title_font.setPointSize(20)
